@@ -89,6 +89,7 @@ True DDD handles cross-aggregate consistency via **domain events**, not multi-re
 
 ## Related
 
+- [[domain-driven-design]] — overview of all DDD building blocks
 - [[ddd-aggregate-root]]
 - [[ddd-domain-events]]
 - [[ports-and-adapters]]
