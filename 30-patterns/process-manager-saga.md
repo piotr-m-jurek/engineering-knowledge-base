@@ -167,55 +167,79 @@ Loads the aggregates needed, creates the process, dispatches the job, persists s
 
 ```typescript
 // application/DispatchComputationService.ts
-import { Effect, Layer, Schedule } from "effect"
+import { Context, Effect, Layer, Schedule } from "effect"
 import { ComputationProcess } from "../domain/pricing/ComputationProcess"
 import { ComputationProcessRepository } from "../domain/pricing/ComputationProcessRepository"
 import { ExternalComputationService } from "../domain/pricing/ExternalComputationService"
 import { OrderRepository } from "../domain/order/OrderRepository"
 import { CustomerRepository } from "../domain/customer/CustomerRepository"
 
-export const dispatchComputation = (orderId: OrderId, customerId: CustomerId) =>
+// --- Service interface ---
+
+export interface DispatchComputationService {
+  readonly execute: (
+    orderId: OrderId,
+    customerId: CustomerId
+  ) => Effect.Effect<
+    ComputationProcessId,
+    OrderNotFound | CustomerNotFound | ExternalServiceError | PersistenceError
+  >
+}
+
+export class DispatchComputationService extends Context.Service<DispatchComputationService>()(
+  "DispatchComputationService"
+) {}
+
+// --- Layer (implementation) ---
+
+export const DispatchComputationServiceLive = Layer.effect(
+  DispatchComputationService,
   Effect.gen(function* () {
     const orderRepo = yield* OrderRepository
     const customerRepo = yield* CustomerRepository
     const processRepo = yield* ComputationProcessRepository
     const externalSvc = yield* ExternalComputationService
 
-    // 1. Load aggregates
-    const order = yield* orderRepo.findById(orderId)
-    const customer = yield* customerRepo.findById(customerId)
+    return DispatchComputationService.of({
+      execute: (orderId, customerId) =>
+        Effect.gen(function* () {
+          // 1. Load aggregates
+          const order = yield* orderRepo.findById(orderId)
+          const customer = yield* customerRepo.findById(customerId)
 
-    // 2. Create process (persisted immediately — survives restarts)
-    const process = new ComputationProcess(
-      ComputationProcessId(crypto.randomUUID()),
-      order.id,
-      customer.id,
-      "pending",
-      null,
-      null,
-      0,
-    )
-    yield* processRepo.save(process)
-
-    // 3. Dispatch to external service with retry + backoff
-    const { jobId } = yield* externalSvc
-      .dispatch({ orderId, customerId })
-      .pipe(
-        Effect.retry(
-          Schedule.exponential("100 millis").pipe(
-            Schedule.intersect(Schedule.recurs(3))
+          // 2. Create process — persisted immediately, survives restarts
+          const process = new ComputationProcess(
+            ComputationProcessId(crypto.randomUUID()),
+            order.id,
+            customer.id,
+            "pending",
+            null,
+            null,
+            0,
           )
-        ),
-        Effect.tapError(() => process.markFailed()),  // track retries on domain obj
-        Effect.tap(() => process.markDispatched(/* jobId */ "")),
-      )
+          yield* processRepo.save(process)
 
-    // 4. Update process state
-    yield* process.markDispatched(jobId)
-    yield* processRepo.save(process)
+          // 3. Dispatch with retry + exponential backoff
+          const { jobId } = yield* externalSvc
+            .dispatch({ orderId, customerId })
+            .pipe(
+              Effect.retry(
+                Schedule.exponential("100 millis").pipe(
+                  Schedule.intersect(Schedule.recurs(3))
+                )
+              ),
+              Effect.tapError(() => process.markFailed()),
+            )
 
-    return process.id
+          // 4. Record dispatched state
+          yield* process.markDispatched(jobId)
+          yield* processRepo.save(process)
+
+          return process.id
+        }),
+    })
   })
+)
 ```
 
 ---
@@ -226,64 +250,130 @@ When the external service responds, this is the entry point. Same structure as a
 
 ```typescript
 // application/HandleComputationResultService.ts
-import { Effect } from "effect"
+import { Context, Effect, Layer } from "effect"
 import { ComputationProcessRepository } from "../domain/pricing/ComputationProcessRepository"
 import { OrderRepository } from "../domain/order/OrderRepository"
 import { EventBus } from "../infrastructure/EventBus"
 
-export const handleComputationResult = (jobId: string, result: number) =>
+// --- Service interface ---
+
+export interface HandleComputationResultService {
+  readonly execute: (
+    jobId: string,
+    result: number
+  ) => Effect.Effect<
+    void,
+    ProcessNotFound | InvalidProcessState | OrderNotFound | PersistenceError
+  >
+}
+
+export class HandleComputationResultService extends Context.Service<HandleComputationResultService>()(
+  "HandleComputationResultService"
+) {}
+
+// --- Layer (implementation) ---
+
+export const HandleComputationResultServiceLive = Layer.effect(
+  HandleComputationResultService,
   Effect.gen(function* () {
     const processRepo = yield* ComputationProcessRepository
     const orderRepo = yield* OrderRepository
     const bus = yield* EventBus
 
-    // 1. Load the process by jobId — find which process this result belongs to
-    const process = yield* processRepo.findByJobId(jobId)
+    return HandleComputationResultService.of({
+      execute: (jobId, result) =>
+        Effect.gen(function* () {
+          // 1. Find which process this result belongs to
+          const process = yield* processRepo.findByJobId(jobId)
 
-    // 2. Record result on process aggregate (enforces state machine)
-    yield* process.receiveResult(result)
+          // 2. Enforce state machine — only accepts result if "dispatched"
+          yield* process.receiveResult(result)
 
-    // 3. Load the target aggregate(s) and apply result
-    const order = yield* orderRepo.findById(process.orderId)
-    yield* order.applyComputedDiscount(result)
+          // 3. Load target aggregate and apply result
+          const order = yield* orderRepo.findById(process.orderId)
+          yield* order.applyComputedDiscount(result)
 
-    // 4. Persist both
-    yield* processRepo.save(process)
-    yield* orderRepo.save(order)
+          // 4. Persist both
+          yield* processRepo.save(process)
+          yield* orderRepo.save(order)
 
-    // 5. Publish events
-    const events = [...process.pullEvents(), ...order.pullEvents()]
-    yield* Effect.forEach(events, bus.publish, { discard: true })
+          // 5. Publish events after persistence
+          const events = [...process.pullEvents(), ...order.pullEvents()]
+          yield* Effect.forEach(events, bus.publish, { discard: true })
+        }),
+    })
   })
+)
 ```
 
 ---
 
 ## Step 5 — Retry worker (for failed processes)
 
-A background worker periodically picks up failed processes and retries dispatch. Effect's `Schedule` and `Stream` handle this cleanly.
+A background worker periodically picks up failed processes and retries dispatch. Modeled as a `Context.Service` so it's injectable and testable like everything else.
 
 ```typescript
 // infrastructure/workers/ComputationRetryWorker.ts
-import { Effect, Schedule, Stream, Duration } from "effect"
+import { Context, Effect, Layer, Schedule, Duration, Stream } from "effect"
 import { ComputationProcessRepository } from "../../domain/pricing/ComputationProcessRepository"
-import { dispatchComputation } from "../../application/DispatchComputationService"
+import { DispatchComputationService } from "../../application/DispatchComputationService"
 
-export const retryWorker = Stream.repeatEffect(
+// --- Service interface ---
+
+export interface ComputationRetryWorker {
+  readonly start: Effect.Effect<never>  // runs forever
+}
+
+export class ComputationRetryWorker extends Context.Service<ComputationRetryWorker>()(
+  "ComputationRetryWorker"
+) {}
+
+// --- Layer (implementation) ---
+
+export const ComputationRetryWorkerLive = Layer.effect(
+  ComputationRetryWorker,
   Effect.gen(function* () {
     const repo = yield* ComputationProcessRepository
-    const failed = yield* repo.findRetryable()  // status = "failed", retryCount < MAX
+    const dispatcher = yield* DispatchComputationService
 
-    yield* Effect.forEach(failed, (process) =>
-      dispatchComputation(process.orderId, process.customerId).pipe(
-        Effect.catchAll((e) =>
-          Effect.logError("Retry failed", e)  // don't crash the worker
-        )
+    const tick = Effect.gen(function* () {
+      const failed = yield* repo.findRetryable()  // status = "failed", retryCount < MAX
+
+      yield* Effect.forEach(
+        failed,
+        (process) =>
+          dispatcher.execute(process.orderId, process.customerId).pipe(
+            Effect.catchAll((e) => Effect.logError("Retry failed", e))  // don't crash the worker
+          ),
+        { concurrency: 5 }
+      )
+    })
+
+    return ComputationRetryWorker.of({
+      start: tick.pipe(
+        Effect.repeat(Schedule.spaced(Duration.seconds(30))),
+        Effect.asVoid,
       ),
-      { concurrency: 5 }
+    })
+  })
+)
+```
+
+Started at the app boundary alongside the HTTP server:
+
+```typescript
+// main.ts
+const AppLive = Layer.mergeAll(
+  HttpServerLive,
+  Layer.launch(
+    Layer.effect(
+      Layer.succeed(ComputationRetryWorker, /* ... */),
+      Effect.gen(function* () {
+        const worker = yield* ComputationRetryWorker
+        yield* worker.start
+      })
     )
-  }),
-  Schedule.spaced(Duration.seconds(30))
+  )
 )
 ```
 
