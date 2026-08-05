@@ -140,7 +140,7 @@ export const DrizzleUserRepositoryLive = Layer.succeed(
 ```
 
 Rules:
-- **Mapping is mandatory** — `toDomain()` converts DB rows → domain aggregates; `toRecord()` goes the other way
+- **Mapping is mandatory** — `toDomain()` converts DB rows → domain aggregates; `toRecord()` goes the other way → see [[ddd-mapper-pattern]]
 - **No domain logic here** — invariants stay on the aggregate
 - **`Layer.succeed`** provides the implementation; compose layers at the app boundary
 
@@ -182,6 +182,7 @@ True DDD handles cross-aggregate consistency via **domain events**, not multi-re
 - [[domain-driven-design]] — overview of all DDD building blocks
 - [[ddd-aggregate-root]]
 - [[ddd-domain-events]]
+- [[ddd-mapper-pattern]] — full breakdown of toDomain / toRecord
 - [[ports-and-adapters]]
 - [[unit-of-work-pattern]]
 - [[effect-context-and-layers]]
