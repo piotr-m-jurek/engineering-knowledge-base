@@ -8,6 +8,41 @@ effect-source: 80-resources/effect-source
 
 # Process Manager / Saga
 
+## Saga vs Process Manager
+
+Both words get used interchangeably in the wild. They're not the same thing.
+
+**Saga (original, 1987)** — a long-lived transaction split into smaller local transactions, each with a **compensating transaction** that semantically reverses it if a later step fails. No global lock held. Compensation is not a rollback — it's a new forward transaction that undoes the effect.
+
+```
+T1 → T2 → T3 → FAIL
+               ↓
+          C2 → C1    ← compensations run in reverse
+```
+
+Example: booking a trip across three separate services.
+```
+book flight        → C: cancel flight
+book hotel         → C: cancel hotel
+charge credit card → C: refund
+```
+If charging fails, you cancel hotel and flight — those DBs already committed, you can't rollback.
+
+**Process Manager** — a stateful coordinator that drives a sequence of steps, owns the state machine, and may include compensations. The central difference from a raw Saga: it has explicit identity (persisted aggregate), tracks its own state, and is restarted from that state on failure.
+
+| | Saga | Process Manager |
+|---|---|---|
+| Coordination | Choreography or orchestration | Orchestration |
+| State | Implicit (in events / steps) | Explicit (persisted aggregate) |
+| Failure handling | Compensating transactions | State machine + compensations |
+| Identity | None — just a sequence | Persisted ID, survives restarts |
+
+**What we built** is a Process Manager. The `markFailed()` + retry worker is a weak compensation — it undoes the "dispatched" state and retries rather than a full semantic reversal. A true Saga would add explicit `compensate()` methods for each step.
+
+In practice: people say "Saga" to mean either. The mechanism that makes it a real Saga is the compensation logic.
+
+---
+
 ## What
 
 A stateful coordinator for a long-running, multi-step operation that spans multiple aggregates and/or external services. Owns the state machine of the overall process — not the business rules of any individual aggregate.
