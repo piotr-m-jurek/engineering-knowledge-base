@@ -1,6 +1,5 @@
 {
   "theme": "obsidian",
   "baseFontSize": 16,
-  "textFontFamily": "",
-  "monospaceFont": "JetBrains Mono, Fira Code, monospace"
+  "textFontFamily": ""
 }

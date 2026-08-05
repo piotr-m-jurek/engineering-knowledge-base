@@ -1,15 +1,48 @@
 {
+  "data_version": 2,
+  "command_timeout": 5,
   "templates_folder": "90-templates",
+  "templates_pairs": [],
+  "trigger_on_file_creation_mode": "none",
   "auto_jump_to_cursor": true,
-  "trigger_on_file_creation": true,
-  "enable_system_commands": false,
+  "jump_to_cursor_after_file_name": false,
+  "shell_path": "",
+  "user_scripts_folder": "",
   "folder_templates": [
-    { "folder": "10-concepts", "template": "90-templates/concept.md" },
-    { "folder": "20-languages", "template": "90-templates/language.md" },
-    { "folder": "30-patterns", "template": "90-templates/pattern.md" },
-    { "folder": "40-tools", "template": "90-templates/tool.md" },
-    { "folder": "50-architectures", "template": "90-templates/architecture.md" },
-    { "folder": "60-decisions", "template": "90-templates/adr.md" },
-    { "folder": "00-inbox", "template": "90-templates/inbox.md" }
-  ]
+    {
+      "folder": "10-concepts",
+      "template": "90-templates/concept.md"
+    },
+    {
+      "folder": "20-languages",
+      "template": "90-templates/language.md"
+    },
+    {
+      "folder": "30-patterns",
+      "template": "90-templates/pattern.md"
+    },
+    {
+      "folder": "40-tools",
+      "template": "90-templates/tool.md"
+    },
+    {
+      "folder": "50-architectures",
+      "template": "90-templates/architecture.md"
+    },
+    {
+      "folder": "60-decisions",
+      "template": "90-templates/adr.md"
+    },
+    {
+      "folder": "00-inbox",
+      "template": "90-templates/inbox.md"
+    }
+  ],
+  "file_templates": [],
+  "syntax_highlighting": true,
+  "syntax_highlighting_mobile": false,
+  "enabled_templates_hotkeys": [],
+  "startup_templates": [],
+  "intellisense_render": "1",
+  "ignore_folders_on_creation": []
 }

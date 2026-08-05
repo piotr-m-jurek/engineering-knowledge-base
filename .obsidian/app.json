@@ -1,4 +1,5 @@
 {
+  "monospaceFont": "JetBrains Mono, Fira Code, monospace",
   "promptDelete": false,
   "defaultViewMode": "source",
   "livePreview": true,
