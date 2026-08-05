@@ -1,0 +1,9 @@
+{
+  "enableDataviewJs": true,
+  "enableInlineDataviewJs": true,
+  "enableInlineDataview": true,
+  "prettyRenderInlineFields": true,
+  "tableIdColumnName": "File",
+  "tableGroupColumnName": "Group",
+  "refreshInterval": 2500
+}

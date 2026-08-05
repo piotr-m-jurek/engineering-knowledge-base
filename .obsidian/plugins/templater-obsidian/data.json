@@ -1,0 +1,15 @@
+{
+  "templates_folder": "90-templates",
+  "auto_jump_to_cursor": true,
+  "trigger_on_file_creation": true,
+  "enable_system_commands": false,
+  "folder_templates": [
+    { "folder": "10-concepts", "template": "90-templates/concept.md" },
+    { "folder": "20-languages", "template": "90-templates/language.md" },
+    { "folder": "30-patterns", "template": "90-templates/pattern.md" },
+    { "folder": "40-tools", "template": "90-templates/tool.md" },
+    { "folder": "50-architectures", "template": "90-templates/architecture.md" },
+    { "folder": "60-decisions", "template": "90-templates/adr.md" },
+    { "folder": "00-inbox", "template": "90-templates/inbox.md" }
+  ]
+}

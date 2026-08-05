@@ -1,0 +1,18 @@
+{
+  "promptDelete": false,
+  "defaultViewMode": "source",
+  "livePreview": true,
+  "legacyEditor": false,
+  "foldHeading": true,
+  "foldIndent": true,
+  "showLineNumber": false,
+  "strictLineBreaks": false,
+  "autoPairMarkdown": true,
+  "smartIndentList": true,
+  "spellcheck": false,
+  "newFileLocation": "folder",
+  "newFileFolderPath": "00-inbox",
+  "attachmentFolderPath": "80-resources/attachments",
+  "alwaysUpdateLinks": true,
+  "useMarkdownLinks": false
+}

@@ -1,0 +1,17 @@
+# Obsidian workspace state (local only)
+.obsidian/workspace.json
+.obsidian/workspace-mobile.json
+.obsidian/cache
+
+# Excalidraw autosave backups
+*.excalidraw.bak
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Sync conflicts
+*.sync-conflict-*
+
+# Attachments that are too large (add manually if needed)
+# 80-resources/attachments/*.mp4
