@@ -366,32 +366,45 @@ Swap `DrizzleOrderRepositoryLive` for `OrderRepositoryLive` in `main.ts` — not
 
 ---
 
-## Layer 6 — Infrastructure: Event Bus (Transactional Outbox)
+## Layer 6 — Infrastructure: Event Bus
 
-Production-safe event delivery: write events to an `outbox` table **in the same transaction** as the aggregate. A background worker reads and publishes.
+Two real-world options. Both use the **Transactional Outbox** pattern as the bridge between the DB write and the broker — the `EventBus` port implementation writes to an `outbox` table in the same DB transaction; a background worker picks up rows and forwards to the broker.
+
+```
+repo.save(order)            ← Postgres UPSERT
+bus.publish(OrderFulfilled) ← Postgres INSERT into outbox (same tx)
+        │
+        │  (async, outbox worker)
+        ▼
+BullMQ queue  OR  RabbitMQ exchange
+        │
+        ▼
+Consumer worker processes the job/message
+```
+
+### Outbox table (shared by both)
 
 ```typescript
 // infrastructure/outbox/schema.ts
-import { pgTable, text, timestamp, jsonb, boolean } from "drizzle-orm/pg-core"
+import { pgTable, text, timestamp, jsonb } from "drizzle-orm/pg-core"
 
 export const outbox = pgTable("outbox", {
   id: text("id").primaryKey(),
-  type: text("type").notNull(),             // event _tag
+  type: text("type").notNull(),           // event _tag e.g. "OrderFulfilled"
   payload: jsonb("payload").notNull(),
   createdAt: timestamp("created_at").notNull().defaultNow(),
-  publishedAt: timestamp("published_at"),   // null = pending
+  publishedAt: timestamp("published_at"), // null = pending
 })
 ```
 
 ```typescript
-// infrastructure/outbox/OutboxEventBus.ts
+// infrastructure/outbox/OutboxEventBus.ts — same for both brokers
 import { Effect, Layer } from "effect"
 import { EventBus } from "../../domain/order/EventBus"
 import { PersistenceError } from "../../domain/order/errors"
 import { db } from "../persistence/db"
 import { outbox } from "./schema"
 
-// Publish = insert into outbox table (same DB connection = same transaction)
 export const OutboxEventBusLive = Layer.succeed(
   EventBus,
   EventBus.of({
@@ -411,45 +424,252 @@ export const OutboxEventBusLive = Layer.succeed(
 )
 ```
 
-```typescript
-// infrastructure/outbox/OutboxWorker.ts — background poller
-import { Effect, Schedule, Layer } from "effect"
-import { isNull } from "drizzle-orm"
-import { db } from "../persistence/db"
-import { outbox } from "./schema"
+---
 
-// In production: replace with Kafka/SQS publish inside the forEach
-const publishToExternalBroker = (row: typeof outbox.$inferSelect) =>
+### Option A — BullMQ (Redis-backed)
+
+BullMQ stores jobs in Redis. Each event type becomes a named queue. Workers pull jobs and process them with automatic retries, backoff, and dead-letter support.
+
+**When to use:** single service or small multi-service setups. No separate broker process — Redis is already there for the cache layer.
+
+```
+npm install bullmq
+```
+
+```typescript
+// infrastructure/messaging/bullmq/queues.ts
+import { Queue } from "bullmq"
+
+const connection = { host: process.env.REDIS_HOST, port: 6379 }
+
+// One queue per event type (or one shared queue — your choice)
+export const orderFulfilledQueue = new Queue("OrderFulfilled", { connection })
+```
+
+```typescript
+// infrastructure/messaging/bullmq/OutboxWorker.ts
+import { Effect, Schedule, Layer } from "effect"
+import { isNull, eq } from "drizzle-orm"
+import { db } from "../../persistence/db"
+import { outbox } from "../schema"
+import { orderFulfilledQueue } from "./queues"
+
+const forwardToQueue = (row: typeof outbox.$inferSelect) =>
   Effect.tryPromise({
     try: async () => {
-      console.log(`[outbox] publishing ${row.type}`, row.payload)
-      // e.g., await kafkaProducer.send({ topic: row.type, messages: [{ value: JSON.stringify(row.payload) }] })
+      // Add job to the BullMQ queue — Redis-backed, durable
+      await orderFulfilledQueue.add(
+        row.type,          // job name
+        row.payload,       // job data
+        {
+          jobId: row.id,   // idempotent: re-enqueue same row → same jobId, no duplicate
+          attempts: 5,
+          backoff: { type: "exponential", delay: 1000 },
+        }
+      )
+      // Mark as published only after successful enqueue
       await db.update(outbox)
         .set({ publishedAt: new Date() })
-        .where(/* eq(outbox.id, row.id) */ outbox.id.eq(row.id))
+        .where(eq(outbox.id, row.id))
     },
     catch: (e) => new Error(String(e)),
   })
 
-export const OutboxWorkerLive = Layer.scopedDiscard(
+export const BullMQOutboxWorkerLive = Layer.scopedDiscard(
   Effect.gen(function* () {
     const poll = Effect.tryPromise({
-      try: () => db.select().from(outbox).where(isNull(outbox.publishedAt)).limit(50),
+      try: () =>
+        db.select().from(outbox)
+          .where(isNull(outbox.publishedAt))
+          .limit(50),
       catch: (e) => new Error(String(e)),
     }).pipe(
       Effect.flatMap((rows) =>
-        Effect.forEach(rows, publishToExternalBroker, { concurrency: 5, discard: true })
+        Effect.forEach(rows, forwardToQueue, { concurrency: 5, discard: true })
       )
     )
 
-    yield* Effect.repeat(poll, Schedule.spaced("5 seconds")).pipe(
+    yield* Effect.repeat(poll, Schedule.spaced("2 seconds")).pipe(
       Effect.forkScoped
     )
   })
 )
 ```
 
-Guarantees: if the app crashes after `repo.save()` but before publishing, the outbox row survives and the worker retries.
+```typescript
+// infrastructure/messaging/bullmq/OrderFulfilledWorker.ts — consumer
+import { Worker } from "bullmq"
+import { Effect, Layer } from "effect"
+
+// What to do when OrderFulfilled lands in the queue
+const processOrderFulfilled = async (job: { data: { orderId: string; customerId: string } }) => {
+  const { orderId, customerId } = job.data
+  console.log(`[bullmq] processing OrderFulfilled orderId=${orderId} customerId=${customerId}`)
+  // e.g.: trigger email, update analytics, notify inventory service
+}
+
+export const OrderFulfilledWorkerLive = Layer.scopedDiscard(
+  Effect.acquireRelease(
+    Effect.sync(() =>
+      new Worker(
+        "OrderFulfilled",
+        processOrderFulfilled,
+        {
+          connection: { host: process.env.REDIS_HOST, port: 6379 },
+          concurrency: 10,
+        }
+      )
+    ),
+    (worker) => Effect.promise(() => worker.close())  // graceful shutdown
+  )
+)
+```
+
+**Retry flow:** BullMQ retries failed jobs up to `attempts` times with exponential backoff. Failed jobs past the limit go to the dead-letter queue (`failed` set in Redis) for inspection.
+
+---
+
+### Option B — RabbitMQ (AMQP)
+
+RabbitMQ routes messages via exchanges. One exchange per domain + binding keys per event type. Multiple consumers can subscribe independently (fan-out). Better for cross-service integration where consumers are in different codebases.
+
+**When to use:** multiple services need to react to the same event independently, or you need complex routing (topic, header-based).
+
+```
+npm install amqplib
+npm install -D @types/amqplib
+```
+
+```typescript
+// infrastructure/messaging/rabbitmq/connection.ts
+import amqp from "amqplib"
+
+let _channel: amqp.Channel | null = null
+
+export const getChannel = async (): Promise<amqp.Channel> => {
+  if (_channel) return _channel
+  const conn = await amqp.connect(process.env.RABBITMQ_URL ?? "amqp://localhost")
+  _channel = await conn.createChannel()
+
+  // Declare durable exchange — survives broker restart
+  await _channel.assertExchange("orders", "topic", { durable: true })
+
+  return _channel
+}
+```
+
+```typescript
+// infrastructure/messaging/rabbitmq/OutboxWorker.ts
+import { Effect, Schedule, Layer } from "effect"
+import { isNull, eq } from "drizzle-orm"
+import { db } from "../../persistence/db"
+import { outbox } from "../schema"
+import { getChannel } from "./connection"
+
+const forwardToExchange = (row: typeof outbox.$inferSelect) =>
+  Effect.tryPromise({
+    try: async () => {
+      const channel = await getChannel()
+
+      // Routing key = event type, e.g. "OrderFulfilled"
+      // Consumers bind queues to this exchange with matching routing key patterns
+      channel.publish(
+        "orders",           // exchange name
+        row.type,           // routing key: "OrderFulfilled"
+        Buffer.from(JSON.stringify(row.payload)),
+        {
+          persistent: true,           // survives RabbitMQ restart
+          messageId: row.id,          // idempotency key for consumers
+          contentType: "application/json",
+          timestamp: Date.now(),
+        }
+      )
+
+      await db.update(outbox)
+        .set({ publishedAt: new Date() })
+        .where(eq(outbox.id, row.id))
+    },
+    catch: (e) => new Error(String(e)),
+  })
+
+export const RabbitMQOutboxWorkerLive = Layer.scopedDiscard(
+  Effect.gen(function* () {
+    const poll = Effect.tryPromise({
+      try: () =>
+        db.select().from(outbox)
+          .where(isNull(outbox.publishedAt))
+          .limit(50),
+      catch: (e) => new Error(String(e)),
+    }).pipe(
+      Effect.flatMap((rows) =>
+        Effect.forEach(rows, forwardToExchange, { concurrency: 5, discard: true })
+      )
+    )
+
+    yield* Effect.repeat(poll, Schedule.spaced("2 seconds")).pipe(
+      Effect.forkScoped
+    )
+  })
+)
+```
+
+```typescript
+// infrastructure/messaging/rabbitmq/OrderFulfilledConsumer.ts — consumer
+import amqp from "amqplib"
+import { Effect, Layer } from "effect"
+import { getChannel } from "./connection"
+
+export const OrderFulfilledConsumerLive = Layer.scopedDiscard(
+  Effect.promise(async () => {
+    const channel = await getChannel()
+
+    // Each service declares its own durable queue and binds to the exchange
+    const { queue } = await channel.assertQueue("notification-service.order-fulfilled", {
+      durable: true,        // survives restart
+      arguments: {
+        "x-dead-letter-exchange": "orders.dlx",  // failed messages → DLX
+      },
+    })
+
+    await channel.bindQueue(queue, "orders", "OrderFulfilled")
+
+    // prefetch = process one message at a time per consumer instance
+    channel.prefetch(1)
+
+    channel.consume(queue, async (msg) => {
+      if (!msg) return
+
+      try {
+        const event = JSON.parse(msg.content.toString())
+        console.log(`[rabbitmq] OrderFulfilled orderId=${event.orderId}`)
+        // e.g.: send email, update read model, notify inventory
+        channel.ack(msg)           // remove from queue: processing succeeded
+      } catch (e) {
+        console.error("[rabbitmq] processing failed", e)
+        channel.nack(msg, false, false)  // false = don't requeue → goes to DLX
+      }
+    })
+  })
+)
+```
+
+**Retry flow:** failed messages go to the dead-letter exchange (`orders.dlx`). A separate queue bound to the DLX holds them for inspection or scheduled retry.
+
+---
+
+### Comparison
+
+| | BullMQ | RabbitMQ |
+|---|---|---|
+| Infrastructure | Redis (already needed for cache) | Separate RabbitMQ process |
+| Fan-out | Manual (multiple queues) | Native (exchange bindings) |
+| Routing | Queue-per-type | Exchange + routing keys |
+| Retry / backoff | Built-in, configurable | Via DLX + TTL |
+| Dead-letter | `failed` set in Redis | Dead-letter exchange |
+| Dashboard | Bull Board / Arena | RabbitMQ Management UI |
+| Best for | Single service, simple pub/sub | Multi-service fan-out, complex routing |
+
+The `EventBus` port and `OutboxEventBus` implementation are **identical** for both — only the outbox worker and consumer change.
 
 ---
 
@@ -467,19 +687,25 @@ import { OrdersHandlerLive } from "./api/OrdersHandler"
 import { FulfillOrderServiceLive } from "./application/FulfillOrderService"
 import { OrderRepositoryLive } from "./infrastructure/cache/CachedOrderRepository"
 import { OutboxEventBusLive } from "./infrastructure/outbox/OutboxEventBus"
-import { OutboxWorkerLive } from "./infrastructure/outbox/OutboxWorker"
+// Pick one:
+import { BullMQOutboxWorkerLive, OrderFulfilledWorkerLive } from "./infrastructure/messaging/bullmq/OutboxWorker"
+// import { RabbitMQOutboxWorkerLive, OrderFulfilledConsumerLive } from "./infrastructure/messaging/rabbitmq/OutboxWorker"
 
 const HttpLive = HttpRouter.serve(
   HttpApiBuilder.router(Api, [OrdersHandlerLive])
 ).pipe(
   Layer.provide(OrdersHandlerLive),
   Layer.provide(FulfillOrderServiceLive),
-  Layer.provide(OrderRepositoryLive),   // Cache wrapping Drizzle
-  Layer.provide(OutboxEventBusLive),
+  Layer.provide(OrderRepositoryLive),      // Cache wrapping Drizzle
+  Layer.provide(OutboxEventBusLive),       // writes to outbox table
   Layer.provideMerge(NodeHttpServer.layer({ port: 3000 }))
 )
 
-const AppLive = Layer.mergeAll(HttpLive, OutboxWorkerLive)
+const AppLive = Layer.mergeAll(
+  HttpLive,
+  BullMQOutboxWorkerLive,    // polls outbox → enqueues to Redis
+  OrderFulfilledWorkerLive,  // pulls from BullMQ queue → processes
+)
 
 NodeRuntime.runMain(Layer.launch(AppLive))
 ```
@@ -592,12 +818,20 @@ FulfillOrderService
         ▼
 Handler returns HTTP 200
 
---- 5 seconds later ---
+--- 2 seconds later ---
 
-OutboxWorker polls outbox
+BullMQOutboxWorker polls outbox
   - finds unpublished OrderFulfilled row
-  - publishes to external broker (Kafka/SQS/log)
+  - orderFulfilledQueue.add(payload, { jobId: row.id })  ← Redis
   - marks publishedAt = now()
+
+--- immediately (BullMQ picks up job) ---
+
+OrderFulfilledWorker.process(job)
+  - sends email / updates read model / notifies inventory
+  - job.ack() → removed from queue
+
+  (on failure → retry with backoff → dead-letter after N attempts)
 ```
 
 ---
@@ -612,7 +846,8 @@ OutboxWorker polls outbox
 | Repository (DB) | Load/save aggregates, map rows | Business logic |
 | Cache wrapper | Read-through, write-through, TTL | Business logic |
 | Event bus (outbox) | Write event row to DB | Processing, filtering, routing |
-| Outbox worker | Poll, publish, mark done | Business logic |
+| Outbox worker | Poll outbox → enqueue to BullMQ/RabbitMQ | Business logic |
+| Queue consumer | Pull job/message → process side effect | Business logic |
 | Frontend hook | Run Effect, expose state | Business logic |
 
 ---
@@ -634,3 +869,5 @@ OutboxWorker polls outbox
 - [@effect/platform HttpApiBuilder](https://effect.website/docs/platform/http-api)
 - [@effect/react](https://effect.website/docs/react)
 - [Transactional Outbox Pattern](https://microservices.io/patterns/data/transactional-outbox.html)
+- [BullMQ docs](https://docs.bullmq.io)
+- [RabbitMQ AMQP concepts](https://www.rabbitmq.com/tutorials/amqp-concepts)
