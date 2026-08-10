@@ -221,6 +221,7 @@ Most developers model the **database**. DDD says model the **domain** — persis
 - [[ports-and-adapters]]
 - [[unit-of-work-pattern]]
 - [[effect-context-and-layers]]
+- [[full-stack-layers]] — how DDD layers map to a complete deployed application
 
 ## References
 
