@@ -205,6 +205,7 @@ Everything from "cache" to "S3" to "Kafka" lives in the bottom-right box.
 - [[ddd-domain-events]]
 - [[ports-and-adapters]]
 - [[full-stack-layers-example]] — live Effect code for every layer
+- [[full-stack-layer-options]] — technology choices per layer with tradeoffs
 
 ## References
 
