@@ -456,6 +456,7 @@ infrastructure/
 - [[ddd-repository-pattern]]
 - [[unit-of-work-pattern]] — wrap steps 2+3 in `withTransaction` if atomicity needed
 - [[ddd-request-flow]]
+- [[durable-execution]] — framework-level automation of this same pattern (Temporal, Effect Workflows)
 
 ## References
 

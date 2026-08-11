@@ -137,6 +137,8 @@ const handleShippingEvent = (raw: ShippingContextEvent) =>
 - [[ddd-repository-pattern]] — application service dispatches events after `repo.save()`
 - [[ddd-bounded-context]] — integration events cross context boundaries
 - [[unit-of-work-pattern]]
+- [[event-sourcing]] — persisting domain events as the primary record instead of derived state
+- [[durable-execution]] — workflows triggered by domain events; durable handling of long-running reactions
 
 ## References
 

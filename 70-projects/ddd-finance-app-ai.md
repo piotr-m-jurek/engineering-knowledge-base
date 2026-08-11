@@ -164,26 +164,102 @@ Image → VisionModel.extract() → raw text → TransactionParser.parse() → P
 
 ---
 
-## Tier 4 — Structural / infrastructure
+## Tier 4 — Durable AI workflows
 
-### 7. Anomaly detection as a background fiber
+### 7. Multi-step AI processes that survive restarts
 
-Runs as a long-lived `Effect.forkScoped` fiber alongside the event bus. Subscribes to `TransactionRecorded` events, maintains a rolling window of spend per envelope, calls LLM only when a statistical threshold is crossed.
+Some AI tasks aren't a single LLM call — they span multiple steps, external waits, and retry loops that must survive process crashes. Examples in this app:
+
+- **Budget review**: fetch 3 months of transactions → call LLM for analysis → wait for user approval → apply reallocation. The wait can be hours.
+- **Anomaly investigation**: detect anomaly → call LLM for explanation → send notification → wait for user acknowledgement → update model.
+
+The naïve approach (chain of `Effect.flatMap` in memory) loses all state on restart. You need **durable execution**.
+
+**Two options at different scale points:**
+
+| | Effect Workflows (`unstable/workflow`) | Temporal |
+|---|---|---|
+| Deployment | In-process, no extra infra | Separate Temporal server |
+| State persistence | Pluggable (memory for dev, custom for prod) | Built-in, event-sourced |
+| Scale | Single service, moderate load | Distributed, millions of executions |
+| When | Fits this weekend project | When you outgrow in-process |
+
+See [[durable-execution]] for the full concept.
+
+### Effect Workflows — what it gives you
+
+Effect v4 ships `unstable/workflow` — a durable execution engine embedded in the Effect runtime. The key types:
+
+- **`Workflow.make`** — defines a named, typed workflow with payload/success/error schemas and an idempotency key
+- **`Activity.make`** — wraps an effect as a named step whose result is stored; on replay, the stored result is returned instead of re-executing
+- **`WorkflowEngine`** — the service that registers workflows, tracks execution state, and resumes suspended runs
+- **`DurableClock`** — sleep for hours/days without holding a fiber open
+- **`DurableDeferred`** — await an external signal (user approval, webhook) durably
 
 ```typescript
-// Not an LLM call on every transaction — only when z-score > threshold
-Effect.forkScoped(
-  Stream.fromPubSub(hub).pipe(
-    Stream.filter(e => e._tag === "TransactionRecorded"),
-    Stream.mapEffect(e => AnomalyDetector.check(e)),
-    Stream.runForEach(alert => Notifications.send(alert)),
-  )
+// packages/llm-acl/src/BudgetReviewWorkflow.ts
+import { Workflow, Activity, DurableClock } from "effect/unstable/workflow"
+import { Duration, Schema } from "effect"
+
+// 1. Define activities — each result is stored durably
+const fetchThreeMonths = Activity.make({
+  name: "BudgetReview/fetchTransactions",
+  success: Schema.Array(TransactionSchema),
+  execute: Effect.fn("fetchTransactions")(function* (envelopeId: string) {
+    return yield* TransactionRepository.findLastNMonths(envelopeId, 3)
+  }),
+})
+
+const callLLMAnalysis = Activity.make({
+  name: "BudgetReview/llmAnalysis",
+  success: Schema.String,
+  execute: Effect.fn("llmAnalysis")(function* (transactions: readonly Transaction[]) {
+    return yield* OverspendExplainer.explain(transactions)
+  }),
+})
+
+// 2. Define the workflow
+export const BudgetReviewWorkflow = Workflow.make("BudgetReview", {
+  payload: { envelopeId: Schema.String, userId: Schema.String },
+  idempotencyKey: (p) => `${p.userId}-${p.envelopeId}`,
+  success: Schema.String,
+})
+
+// 3. Register the handler
+export const BudgetReviewWorkflowLayer = BudgetReviewWorkflow.toLayer(
+  function* (payload) {
+    // Each activity result is stored — crash here and resume picks up from last stored result
+    const transactions = yield* fetchThreeMonths(payload.envelopeId)
+    const analysis    = yield* callLLMAnalysis(transactions)
+
+    // Wait up to 24h for user approval — no fiber held open
+    yield* DurableClock.sleep(Duration.hours(24))
+
+    return analysis
+  }
 )
 ```
 
-Fits the existing `InProcessEventBusLayer` composition point. Add `AnomalyDetector` to `Layer.mergeAll` — nothing else changes.
+```typescript
+// Execute from api layer — discard = true means fire and poll
+const executionId = yield* BudgetReviewWorkflow.execute(
+  { envelopeId, userId },
+  { discard: true }
+)
 
-This is the DDD payoff extended to AI: the architecture absorbs a new capability by adding a `Layer`, not by touching domain code.
+// Later — poll for result
+const result = yield* BudgetReviewWorkflow.poll(executionId)
+```
+
+**Why this matters architecturally:** The workflow handler looks like a normal `Effect.gen` function. The `WorkflowEngine` is the `Context.Service` that injects durability — swap `WorkflowEngine.layerMemory` for a persistent engine and the handler is unchanged. Same DDD payoff: behaviour in domain/application code, infrastructure concern in the `Layer`.
+
+### When to reach for Temporal instead
+
+- Multiple services need to participate in one workflow (cross-process coordination)
+- You need Temporal's UI for workflow inspection and debugging
+- Execution count is large enough that in-process state becomes a constraint
+
+The programming model is identical in concept — activities, workflows, durable timers, signals for external events. The difference is operational: Temporal is infrastructure you run separately. [[durable-execution]] covers both.
 
 ---
 
@@ -252,7 +328,9 @@ Swap layer in `main.ts`. Tests use mock. CI uses mock. Production uses real. Sam
 
 ## Related
 
-- [[ddd-finance-app]]
+- [[ddd-finance-app]] — base architecture
+- [[durable-execution]] — Tier 4 concept: Temporal, Effect Workflows, durable activities
+- [[process-manager-saga]] — the manual pattern that durable execution automates
 - [[domain-driven-design]]
 - [[ddd-bounded-context]]
 - [[ports-and-adapters]]
