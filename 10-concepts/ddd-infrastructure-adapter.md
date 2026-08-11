@@ -28,7 +28,7 @@ DDD organises code into four layers:
 ├──────────────────────────────────────────────────────────────┤
 │  Domain Layer                                                │
 │  Aggregates, domain services, ports (interfaces)             │
-│  ← the core; no dependencies on anything below              │
+│  ← the core; no dependencies on anything below               │
 ├──────────────────────────────────────────────────────────────┤
 │  Infrastructure Layer                                        │
 │  Adapters: DB drivers, HTTP clients, file system,            │
@@ -77,9 +77,10 @@ The domain only knows the port interface. It never imports Drizzle. The adapter 
 
 ## Why this coupling is "fine"
 
-Back to the original line:
+In [[service-coupling]], `TodoService` acquiring `TodoRepo` via `yield*` is used as an example of coupling that is acceptable:
 
 ```typescript
+// from: 80-resources/effect-source/ai-docs/src/09_testing/20_layer-tests.ts
 // TodoService yields TodoRepo — this is a direct dependency
 const repo = yield* TodoRepo
 ```
