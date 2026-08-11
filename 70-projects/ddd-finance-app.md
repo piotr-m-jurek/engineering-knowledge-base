@@ -999,6 +999,7 @@ No layer skips another. Domain never touches infrastructure. Infrastructure neve
 
 ## Related
 
+- [[ddd-finance-app-ai]] — LLM/AI extensions (4 tiers)
 - [[domain-driven-design]]
 - [[ddd-aggregate-root]]
 - [[ddd-bounded-context]]
