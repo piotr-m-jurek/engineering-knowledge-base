@@ -186,3 +186,4 @@ Most of the time, the failure mode doesn't exist yet. Add complexity when you fe
 - [[durable-execution]]
 - [[ddd-domain-events]]
 - [[ports-and-adapters]]
+- [[architecture-decision-records]] — when you do choose one of these patterns, write an ADR

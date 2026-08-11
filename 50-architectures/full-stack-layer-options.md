@@ -37,6 +37,11 @@ The most consequential choice. Wrong database = rewrite in 2 years.
 - Query patterns are varied and ad-hoc
 - Correctness > raw speed
 
+**Avoid when:**
+- Write throughput is in the millions/sec and schema is fixed (→ Cassandra)
+- All queries are aggregate scans over billions of rows (→ ClickHouse)
+- The core feature is graph traversal at depth > 3 (→ Neo4j)
+
 **Example business:** e-commerce orders, banking, SaaS user/billing data
 
 ```
@@ -55,6 +60,11 @@ Postgres is the default. Start here unless you have a specific reason not to.
 - Schema evolves frequently (early product, lots of unknowns)
 - Access pattern is almost always "give me this one document by ID"
 - You need horizontal write scaling from day one
+
+**Avoid when:**
+- You need multi-document transactions (painful to add later)
+- Query patterns are ad-hoc or unknown upfront — DynamoDB especially punishes this
+- Your data is relational: many small entities joined in different combinations
 
 **Example business:** CMS, user profiles, product catalog with highly variable attributes
 
@@ -84,6 +94,12 @@ Postgres is the default. Start here unless you have a specific reason not to.
 - Reads are always by a known partition key + time range
 - You can sacrifice strong consistency
 
+**Avoid when:**
+- You need ad-hoc queries or joins — there are none
+- Your team is small and ops burden matters — Cassandra clusters are hard to run
+- Correctness is critical — tunable consistency means you can misconfigure it silently
+- You have < 1M writes/day — Postgres handles this fine
+
 **Example business:** real-time analytics ingestion, IoT telemetry, activity feeds
 
 ```
@@ -103,6 +119,12 @@ clustering key: recorded_at DESC
 - Data is written in bulk (ETL, event streams) not row-by-row
 - Latency of seconds is fine, throughput is everything
 - Workload is analytical (OLAP), not transactional (OLTP)
+
+**Avoid when:**
+- You need point lookups by ID — columnar layout makes these slow
+- Data is written row-by-row at high frequency — columnar ingestion is batch-oriented
+- You need to update or delete individual rows frequently
+- Your dataset fits in Postgres with a materialized view — don't add infra you don't need
 
 **Example business:** business intelligence, dashboards, data warehouse, log analytics
 
@@ -130,6 +152,12 @@ DuckDB is notable: runs in-process (like SQLite), excellent for local analytics 
 - Queries traverse unknown depth (e.g. "friends of friends", "what depends on what")
 - Highly connected data where relational joins become expensive at depth > 2–3
 
+**Avoid when:**
+- Traversal is not the core feature — a recursive CTE in Postgres usually suffices
+- Your team doesn't know Cypher/Gremlin — unfamiliar query language is a real cost
+- You need bulk analytics across nodes — graph DBs are poor at aggregations
+- The graph fits in memory — a simple adjacency list in your app or a Postgres table is fine
+
 **Example business:** social networks, fraud detection (rings of connected accounts), recommendation engines, dependency graphs, knowledge graphs
 
 ```cypher
@@ -152,6 +180,11 @@ LIMIT 10
 - Similarity search is a core access pattern ("find items semantically similar to X")
 - Data is embedded as high-dimensional vectors (ML embeddings from text, images, audio)
 - You need approximate nearest-neighbour (ANN) search at scale
+
+**Avoid when:**
+- You need exact keyword match — full-text search is faster and simpler
+- Your embedding quality is unknown or untested — bad embeddings make vector search useless regardless of the DB
+- Dataset is < 100k rows — pgvector on Postgres is sufficient; no new infra needed
 
 **Example business:** semantic search, recommendation (embedding-based), RAG pipelines, image similarity, duplicate detection
 
@@ -179,6 +212,11 @@ await db.execute(sql`
 - Compression of time-series data matters (10–100x vs raw Postgres)
 - Built-in downsampling, retention policies, and time-bucketing functions are needed
 
+**Avoid when:**
+- You have < 1M time-series rows — Postgres with a `recorded_at` index handles this fine
+- You need to join time-series data with relational entities frequently — awkward across two DBs
+- Your team already runs Postgres and the volume doesn't justify another system
+
 **Example business:** infrastructure metrics, financial tick data, sensor readings, application performance monitoring
 
 ```sql
@@ -204,6 +242,11 @@ ORDER BY hour
 - Data fits a simple structure (string, hash, list, set)
 
 Redis doubles as cache + primary store for ephemeral data (sessions, rate limit counters, leaderboards, pub/sub).
+
+**Avoid when:**
+- You need to query by anything other than the key — use Postgres
+- Data must be durable and loss is unacceptable — Redis AOF/RDB persistence is not as reliable as a proper DB
+- You're using it as a primary data store for business data — it's designed for ephemeral/cached data
 
 **Tradeoff:** no query language, no joins, limited data modeling. Redis data is in-memory by default — persistence requires explicit configuration.
 
@@ -245,6 +288,8 @@ Is latency the only constraint and data is simple?
 
 **Fits when:** data is immutable or changes rarely, single instance, sub-microsecond access needed. Config values, compiled templates, feature flags.
 
+**Avoid when:** you run multiple app instances (cache is not shared), data changes at runtime (cache goes stale silently), or you need TTL/eviction (→ Redis).
+
 ```typescript
 // Effect: cache at the Layer level — initialized once, lives for app lifetime
 export const FeatureFlagsLive = Layer.effect(
@@ -266,6 +311,8 @@ export const FeatureFlagsLive = Layer.effect(
 
 **Fits when:** multiple app instances share cache, cache must survive restart, you need TTL + eviction policies.
 
+**Avoid when:** you have a single instance and data rarely changes — in-process cache is faster and simpler. Don't add Redis just for caching if you don't already run it.
+
 Patterns:
 - **Read-through:** check cache → miss → load from DB → populate cache
 - **Write-through:** write to DB + cache atomically
@@ -282,6 +329,8 @@ Patterns:
 ### CDN (Cloudflare, CloudFront, Fastly)
 
 **Fits when:** responses are public, identical for all users, and geographically distributed users matter.
+
+**Avoid when:** responses are authenticated or user-specific (CDN can't safely cache them), your users are all in one region (latency gain is marginal), or you need dynamic personalisation on every request.
 
 ```
 Without CDN: user in Tokyo → origin in Frankfurt → 200ms RTT
@@ -341,14 +390,14 @@ client.on("notification", (msg) => {
 
 The API contract shape affects client coupling, versioning, and what tooling is available.
 
-| Style | Fits when |
-|---|---|
-| REST | Public API, stable resources, many consumers, HTTP caching matters |
-| GraphQL | Frontend-driven, many clients with different data needs, avoid over-fetching |
-| tRPC | Full-stack TypeScript, internal API, type safety end-to-end without codegen |
-| gRPC | Service-to-service, binary protocol, streaming, polyglot |
-| WebSocket | Real-time bidirectional (chat, collaborative, live data) |
-| SSE | Server → client push only (notifications, progress, live feed) |
+| Style | Fits when | Avoid when |
+|---|---|---|
+| REST | Public API, stable resources, many consumers, HTTP caching matters | Tight type-safety needed across TS stack — codegen is painful |
+| GraphQL | Frontend-driven, many clients with different data needs, avoid over-fetching | Simple API with one client; N+1 queries and schema complexity bite hard |
+| tRPC | Full-stack TypeScript, internal API, type safety end-to-end without codegen | Non-TS clients, public API, or you need HTTP caching semantics |
+| gRPC | Service-to-service, binary protocol, streaming, polyglot | Browser clients (gRPC-Web adds complexity); small teams unfamiliar with protobufs |
+| WebSocket | Real-time bidirectional (chat, collaborative, live data) | One-way push only — SSE is simpler; request/response — HTTP is simpler |
+| SSE | Server → client push only (notifications, progress, live feed) | Client needs to send messages back — use WebSocket instead |
 
 **In Effect:** `HttpApi` handles REST natively with Schema validation. tRPC and gRPC require separate adapters. WebSocket and SSE are supported via `HttpRouter` streaming responses.
 
@@ -418,13 +467,13 @@ Every Effect operation becomes a traceable span. No manual instrumentation neede
 
 ## Layer: Infrastructure / Deployment
 
-| Choice | Fits when |
-|---|---|
-| Single VPS (Railway, Render, Fly.io) | Early stage, small team, fast iteration |
-| Managed containers (ECS, Cloud Run) | Medium scale, don't want to manage k8s |
-| Kubernetes | Large scale, many services, need fine-grained control |
-| Serverless (Lambda, Vercel functions) | Bursty traffic, pay-per-request, stateless |
-| Edge (Cloudflare Workers) | Latency-critical, globally distributed, stateless |
+| Choice | Fits when | Avoid when |
+|---|---|---|
+| Single VPS (Railway, Render, Fly.io) | Early stage, small team, fast iteration | Traffic justifies horizontal scaling; stateful workloads need more control |
+| Managed containers (ECS, Cloud Run) | Medium scale, don't want to manage k8s | You need custom scheduling, multi-tenancy, or have a platform team for k8s |
+| Kubernetes | Large scale, many services, fine-grained control needed | Small team — ops overhead is enormous; start simpler |
+| Serverless (Lambda, Vercel functions) | Bursty traffic, pay-per-request, stateless | Long-running workers, persistent DB connections, cold start sensitivity |
+| Edge (Cloudflare Workers) | Latency-critical, globally distributed, stateless | Heavy compute, large dependencies, stateful operations |
 
 **Serverless tradeoffs:** cold starts, 15min max duration, no persistent connections (bad for Postgres without a connection pooler like PgBouncer or RDS Proxy), stateless. Good for API routes, bad for long-running workers.
 
