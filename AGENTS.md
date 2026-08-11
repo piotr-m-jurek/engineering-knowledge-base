@@ -137,6 +137,21 @@ The vault has a DDD cluster. When adding DDD-related notes, link to:
 
 ---
 
+## Note writing style
+
+When writing concept notes, use the `/explain` style — a single note that walks through the concept at increasing levels of understanding:
+
+1. **Junior** — intuition, simple analogy, minimal code
+2. **Mid-level** — real implementation with Effect v4 examples showing decoupling
+3. **Senior** — trade-offs, scaling implications, eventual consistency, system thinking
+4. **Principal** — when to use vs not, boundary decisions, team/org implications
+
+Code examples in notes use **Effect v4** as the default language when illustrating decoupling, service design, or dependency injection patterns. Plain TypeScript is fine for pure domain types or algorithms that don't involve effects.
+
+Trigger: user writes `/explain <topic>` or asks to "explain X following the junior to senior style".
+
+---
+
 ## Do not
 
 - Edit files in `90-templates/` — those are Obsidian Templater templates

@@ -405,12 +405,12 @@ The API contract shape affects client coupling, versioning, and what tooling is 
 
 ## Layer: Frontend state
 
-| Approach | Fits when |
-|---|---|
-| Server state only (TanStack Query / SWR) | Most apps — server is source of truth, client just displays |
-| Client state (Zustand, Jotai) | UI-only state (modals, tabs, form wizard steps) |
-| URL state | Shareable filters, pagination, search — survives refresh |
-| Global store (Redux) | Complex client-side business logic — rare, usually a smell |
+| Approach | Fits when | Avoid when |
+|---|---|---|
+| Server state only (TanStack Query / SWR) | Most apps — server is source of truth, client just displays | Offline-first or heavy client-side computation |
+| Client state (Zustand, Jotai) | UI-only state (modals, tabs, form wizard steps) | Data that should survive refresh or be shareable — put it in URL or server |
+| URL state | Shareable filters, pagination, search — survives refresh | Sensitive data; complex nested structures (URLs get ugly fast) |
+| Global store (Redux) | Complex client-side business logic — rare, usually a smell | Almost always — reach for server state + URL first |
 
 **Rule:** keep as little state client-side as possible. If it can live in the URL or be re-fetched, it should be.
 
@@ -422,13 +422,13 @@ In the Effect stack: `@effect/react` `useQuery`-style hooks for server state + U
 
 When your database's `LIKE` or full-text search isn't enough.
 
-| Technology | Fits when |
-|---|---|
-| Postgres full-text (`tsvector`) | Simple keyword search, small-medium dataset, already on Postgres |
-| Elasticsearch / OpenSearch | Complex full-text, facets, relevance tuning, large dataset |
-| Typesense | Fast typo-tolerant search, simpler than ES, good for product/docs search |
-| Meilisearch | Developer-friendly, good defaults, small-medium scale |
-| pgvector | Semantic / embedding-based similarity search |
+| Technology | Fits when | Avoid when |
+|---|---|---|
+| Postgres full-text (`tsvector`) | Simple keyword search, small-medium dataset, already on Postgres | Typo tolerance, faceted search, or relevance tuning needed |
+| Elasticsearch / OpenSearch | Complex full-text, facets, relevance tuning, large dataset | Small team or small dataset — operational cost is high |
+| Typesense | Fast typo-tolerant search, simpler than ES, good for product/docs search | Billions of documents or custom relevance models |
+| Meilisearch | Developer-friendly, good defaults, small-medium scale | Very large datasets or complex ranking requirements |
+| pgvector | Semantic / embedding-based similarity search | Exact keyword match — it's slower and less precise than full-text for that |
 
 **Access pattern drives the choice:**
 - Exact keyword match → Postgres full-text
