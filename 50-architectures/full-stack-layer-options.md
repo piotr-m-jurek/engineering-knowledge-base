@@ -49,7 +49,7 @@ Orders ─── OrderLines ─── Products
   └── Customers ──── Invoices
 ```
 
-Postgres is the default. Start here unless you have a specific reason not to.
+*Postgres is the default. Start here unless you have a specific reason not to.*
 
 ---
 
