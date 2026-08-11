@@ -1,6 +1,7 @@
 {
   "theme": "obsidian",
   "baseFontSize": 16,
-  "textFontFamily": "",
-  "cssTheme": "Obsidian gruvbox"
+  "textFontFamily": "CommitMonoAllLigatures",
+  "cssTheme": "Obsidian gruvbox",
+  "monospaceFontFamily": "Berkeley Mono"
 }

@@ -54,7 +54,7 @@ class TodoService extends Context.Service<TodoService, {
 
 `TodoService` can't exist without `TodoRepo`. They fail together, deploy together, test together.
 
-This is **fine** when `TodoRepo` is an infrastructure adapter in the same deployment (a DB wrapper). The issue appears when both sides are **independent services** that should be able to fail or change independently.
+This is **fine** when `TodoRepo` is an infrastructure adapter in the same deployment (a DB wrapper) — see [[ddd-infrastructure-adapter]]. The issue appears when both sides are **independent services** that should be able to fail or change independently.
 
 ---
 

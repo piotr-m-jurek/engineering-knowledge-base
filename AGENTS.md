@@ -62,6 +62,8 @@ Use `[[wikilink]]` for internal links. Link generously — notes should be dense
 
 Code blocks must specify language: ` ```typescript `, ` ```bash `, etc.
 
+ASCII diagrams (box-drawing charts) must not exceed **80 characters per line**.
+
 ---
 
 ## Effect source resource
@@ -149,6 +151,8 @@ When writing concept notes, use the `/explain` style — a single note that walk
 Code examples in notes use **Effect v4** as the default language when illustrating decoupling, service design, or dependency injection patterns. Plain TypeScript is fine for pure domain types or algorithms that don't involve effects.
 
 Trigger: user writes `/explain <topic>` or asks to "explain X following the junior to senior style".
+
+Available OpenCode skill for this: `explain` (auto-loads the full style rules and Effect v4 code constraints).
 
 ---
 
