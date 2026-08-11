@@ -23,26 +23,18 @@ The standard fix is an audit log column or a separate audit table — but it's b
 
 Instead of a `budgets` table with one row per budget showing the current values:
 
-```
-┌────────┬──────────────┬───────────────┐
-│ id     │ income_cents │ updated_at    │
-├────────┼──────────────┼───────────────┤
-│ abc123 │ 300000       │ 2026-08-11    │
-└────────┴──────────────┴───────────────┘
-```
+| id | income_cents | updated_at |
+|----|-------------|------------|
+| abc123 | 300000 | 2026-08-11 |
 
 You store a `budget_events` table with one row per thing that happened:
 
-```
-┌─────┬───────────┬──────────────────────────────────────────┬──────────────────────┐
-│ seq │ budget_id │ event                                    │ occurred_at          │
-├─────┼───────────┼──────────────────────────────────────────┼──────────────────────┤
-│ 1   │ abc123    │ BudgetCreated { income: 280000 }         │ 2026-07-01 09:00     │
-│ 2   │ abc123    │ EnvelopeCreated { name: "Rent", ... }    │ 2026-07-01 09:01     │
-│ 3   │ abc123    │ FundsAllocated { envelope: "Rent", ... } │ 2026-07-15 14:22     │
-│ 4   │ abc123    │ BudgetIncomeUpdated { income: 300000 }   │ 2026-08-01 10:00     │
-└─────┴───────────┴──────────────────────────────────────────┴──────────────────────┘
-```
+| seq | budget_id | event                                      | occurred_at      |
+| --- | --------- | ------------------------------------------ | ---------------- |
+| 1   | abc123    | `BudgetCreated { income: 280000 }`         | 2026-07-01 09:00 |
+| 2   | abc123    | `EnvelopeCreated { name: "Rent", ... }`    | 2026-07-01 09:01 |
+| 3   | abc123    | `FundsAllocated { envelope: "Rent", ... }` | 2026-07-15 14:22 |
+| 4   | abc123    | `BudgetIncomeUpdated { income: 300000 }`   | 2026-08-01 10:00 |
 
 To get the current budget: replay events 1–4 in order. To get the budget as it was on July 31: replay events 1–3. The event log is the source of truth. The snapshot is a derived view.
 
